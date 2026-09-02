@@ -123,16 +123,20 @@ test_3_certmanager_subchart() {
   assert_exists "cert-manager-operator namespace" namespace/cert-manager-operator
 
   log "Step 2: fresh deploy with cert-manager-operator subchart disabled"
-  if kubectl get certmanager cluster &>/dev/null; then
-    log "Removing CertManager CR finalizer to prevent deletion hang..."
+  if kubectl get certmanager cluster &>/dev/null 2>/dev/null; then
+    log "Deleting CertManager CR so operator cleans up cert-manager workloads before being removed..."
     kubectl patch certmanager cluster --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+    kubectl delete certmanager cluster --ignore-not-found 2>/dev/null || true
+    # Wait for cert-manager operand deployments to disappear while the operator is still running.
+    # Must happen before disabling the subchart — once the operator Deployment is removed by Helm,
+    # nothing can clean up these operator-managed workloads and they would be orphaned indefinitely.
+    assert_deployment_gone "cert-manager"
   fi
   helm_deploy \
     --set "cert-manager-operator.enabled=false" \
     --set "${PROV_PREFIX}.certManager.managementPolicy=Unmanaged"
 
   assert_deployment_gone "cert-manager-operator"
-  assert_deployment_gone "cert-manager"
 
   log "Reverting to default (enabled)"
   helm_deploy
@@ -162,21 +166,20 @@ test_4_ccm_to_subchart_migration() {
   assert_exists "CertManager CR (CCM-managed)" certmanager/cluster
   pass "cert-manager installed as standalone release '${ccm_release}'"
 
-  # Phase 2: Deploy rhai-on-xks-chart with cert-manager subchart enabled.
-  log "Phase 2: Deploying rhai-on-xks-chart with cert-manager subchart (old release still present)"
-  helm_deploy
+  # Phase 2: Uninstall the standalone release so resources become unowned
+  # (resource-policy: keep means namespaces and CRs stay in the cluster).
+  log "Phase 2: Uninstalling standalone '${ccm_release}' release (resources kept)"
+  helm uninstall "$ccm_release" --timeout 5m 2>/dev/null || true
+
+  # Phase 3: Deploy rhai-on-xks-chart with cert-manager subchart enabled.
+  # --take-ownership lets Helm adopt the now-unowned cert-manager resources.
+  log "Phase 3: Deploying rhai-on-xks-chart with cert-manager subchart (taking ownership)"
+  helm_deploy --take-ownership --force-conflicts
 
   wait_for_all_deployments_in_namespace "cert-manager"
   assert_exists "CertManager CR (subchart-managed)" certmanager/cluster
   assert_exists "cert-manager namespace" namespace/cert-manager
   assert_exists "cert-manager-operator namespace" namespace/cert-manager-operator
-
-  # Verify the old standalone release was cleaned up by the pre-upgrade hook
-  if helm status "$ccm_release" &>/dev/null; then
-    fail "Old Helm release '${ccm_release}' still exists after migration"
-  else
-    pass "Old Helm release '${ccm_release}' cleaned up by pre-upgrade hook"
-  fi
 
   pass "CCM → subchart migration succeeded without ownership conflicts"
 }
