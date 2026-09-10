@@ -62,9 +62,7 @@ rules:
   - apiGroups:
       - infrastructure.opendatahub.io
     resources:
-      - azurekubernetesengines
-      - awskubernetesengines
-      - coreweavekubernetesengines
+      - {{ (include "rhai-on-xks-chart.activeProvider" . | fromYaml).keResource }}
     verbs:
       - get
       - list
@@ -141,6 +139,10 @@ spec:
               value: {{ .Release.Name | quote }}
             - name: RELEASE_NAMESPACE
               value: {{ .Release.Namespace | quote }}
+            - name: KE_RESOURCE
+              value: {{ (include "rhai-on-xks-chart.activeProvider" . | fromYaml).keResource | quote }}
+            - name: KE_NAME
+              value: {{ (include "rhai-on-xks-chart.activeProvider" . | fromYaml).keName | quote }}
           command:
             - /bin/bash
             - -c

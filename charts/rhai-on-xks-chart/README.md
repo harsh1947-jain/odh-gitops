@@ -295,8 +295,12 @@ chart and remove it yourself. As with chart-managed CRDs above, remove them manu
 longer need them:
 
 ```bash
-kubectl delete certmanager cluster
-kubectl delete namespace cert-manager-operator cert-manager
+# Remove the finalizer first so the CR is not stuck in Terminating after the operator is gone
+kubectl patch certmanager cluster --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+# Delete the operator namespace to stop the operator before deleting the CR (otherwise it recreates it)
+kubectl delete namespace cert-manager-operator
+kubectl delete certmanager cluster --ignore-not-found
+kubectl delete namespace cert-manager
 kubectl delete clusterrole cert-manager-operator-controller-manager-clusterrole cert-manager-operator-metrics-reader
 kubectl delete clusterrolebinding cert-manager-operator-controller-manager-clusterrolebinding
 ```
